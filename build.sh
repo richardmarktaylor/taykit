@@ -1,0 +1,13 @@
+#!/bin/bash
+
+set -e
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+python -m pip install --upgrade pip
+python -m pip install pyinstaller
+
+pyinstaller --onefile --name taykit taykit/cli.py
+
+echo "Built executable: dist/taykit"
