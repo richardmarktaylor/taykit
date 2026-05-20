@@ -10,6 +10,6 @@ python -m pip install pyinstaller pandas pyarrow pyliftover
 
 rm -rf build dist taykit.spec
 
-pyinstaller --onedir --name taykit taykit/cli.py
+pyinstaller --onefile --name taykit taykit/cli.py
 
 echo "Built executable: dist/taykit/taykit"
