@@ -7,8 +7,55 @@ import html
 import json
 import sys
 import xml.etree.ElementTree as ET
-from pathlib import Path
 from collections import defaultdict
+from pathlib import Path
+
+COMMAND = "merge"
+
+HELP = "Merge two or more raw DNA files"
+
+DESCRIPTION = (
+    "Merge two or more raw genetic data files into one distinct rsID/genotype dataset."
+)
+
+EPILOG = """
+Examples:
+  taykit merge file1.txt file2.txt
+  taykit merge file1.txt file2.txt --output-path ./merged
+  taykit merge file1.txt file2.txt --report-type html
+  taykit merge file1.txt file2.txt --output-format json --report-type json
+  taykit merge file1.txt file2.txt file3.txt --output-format vcfgz --report-type html
+
+What this tool does:
+  - Accepts two or more supported raw DNA files.
+  - Detects the source/provider format automatically.
+  - Detects the genome build where possible.
+  - Rejects mixed GRCh37/GRCh38 merges.
+  - Creates a non-conflicting merged output.
+  - Creates a separate conflicting output.
+  - Optionally creates a report in HTML, JSON, TXT, or XML.
+
+Supported input providers:
+  - AncestryDNA
+  - SelfDecode
+  - MyHeritage
+  - 23andMe-style tab-delimited raw data
+
+Output files:
+  - merged.<format>
+  - conflicting.<format>
+  - report.<report-type>, only if --report-type is supplied
+
+Default behaviour:
+  - Output folder: same folder as the first input file
+  - Output format: txt
+  - Report: none
+
+Conflict logic:
+  - If an rsID appears in multiple files with the same genotype, it is merged.
+  - If an rsID appears in multiple files with different genotypes, it is written to conflicting output only.
+  - Genotypes such as AG and GA are treated as equivalent.
+"""
 
 
 SUPPORTED_OUTPUT_FORMATS = [
@@ -358,11 +405,13 @@ def validate_inputs(input_files):
 
     for file_path in input_files:
         info = detect_provider_and_build(file_path)
-        file_infos.append({
-            "path": file_path,
-            "provider": info["provider"],
-            "build": info["build"],
-        })
+        file_infos.append(
+            {
+                "path": file_path,
+                "provider": info["provider"],
+                "build": info["build"],
+            }
+        )
 
     known_builds = {
         file_info["build"]
@@ -398,12 +447,14 @@ def merge_records(file_records):
         source_name = file_record["path"].name
 
         for rsid, record in file_record["records"].items():
-            observed[rsid].append({
-                "source": source_name,
-                "chromosome": record["chromosome"],
-                "position": record["position"],
-                "genotype": record["genotype"],
-            })
+            observed[rsid].append(
+                {
+                    "source": source_name,
+                    "chromosome": record["chromosome"],
+                    "position": record["position"],
+                    "genotype": record["genotype"],
+                }
+            )
 
     merged = []
     conflicting = []
@@ -416,26 +467,34 @@ def merge_records(file_records):
         position = entries[0]["position"]
 
         if len(genotypes) == 1:
-            merged.append({
-                "rsid": rsid,
-                "chromosome": chromosome,
-                "position": position,
-                "genotype": genotypes[0],
-                "source_count": len(entries),
-                "sources": ", ".join(sorted({entry["source"] for entry in entries})),
-            })
+            merged.append(
+                {
+                    "rsid": rsid,
+                    "chromosome": chromosome,
+                    "position": position,
+                    "genotype": genotypes[0],
+                    "source_count": len(entries),
+                    "sources": ", ".join(
+                        sorted({entry["source"] for entry in entries})
+                    ),
+                }
+            )
         else:
-            conflicting.append({
-                "rsid": rsid,
-                "chromosome": chromosome,
-                "position": position,
-                "genotypes": "; ".join(
-                    f"{entry['source']}={entry['genotype']}"
-                    for entry in sorted(entries, key=lambda item: item["source"])
-                ),
-                "source_count": len(entries),
-                "sources": ", ".join(sorted({entry["source"] for entry in entries})),
-            })
+            conflicting.append(
+                {
+                    "rsid": rsid,
+                    "chromosome": chromosome,
+                    "position": position,
+                    "genotypes": "; ".join(
+                        f"{entry['source']}={entry['genotype']}"
+                        for entry in sorted(entries, key=lambda item: item["source"])
+                    ),
+                    "source_count": len(entries),
+                    "sources": ", ".join(
+                        sorted({entry["source"] for entry in entries})
+                    ),
+                }
+            )
 
     return merged, conflicting
 
@@ -451,7 +510,9 @@ def write_delimited(output_file: Path, rows, delimiter):
     with output_file.open("w", encoding="utf-8", newline="") as file:
         writer = csv.DictWriter(
             file,
-            fieldnames=list(rows[0].keys()) if rows else ["rsid", "chromosome", "position", "genotype"],
+            fieldnames=list(rows[0].keys())
+            if rows
+            else ["rsid", "chromosome", "position", "genotype"],
             delimiter=delimiter,
         )
         writer.writeheader()
@@ -737,7 +798,9 @@ def write_txt_report(output_file: Path, summary, conflicting):
         file.write("-" * 80 + "\n")
         file.write(f"Total input SNP rows: {summary['total_input_snp_rows']:,}\n")
         file.write(f"Unique input rsIDs: {summary['unique_input_rsids']:,}\n")
-        file.write(f"Merged non-conflicting count: {summary['merged_non_conflicting_count']:,}\n")
+        file.write(
+            f"Merged non-conflicting count: {summary['merged_non_conflicting_count']:,}\n"
+        )
         file.write(f"Conflicting count: {summary['conflicting_count']:,}\n")
         file.write(f"Merged output: {summary['merged_output']}\n")
         file.write(f"Conflicting output: {summary['conflicting_output']}\n")
@@ -833,12 +896,14 @@ def run_merge(args):
     for file_info in file_infos:
         records = load_genetic_data(file_info["path"], file_info["provider"])
 
-        file_records.append({
-            "path": file_info["path"],
-            "provider": file_info["provider"],
-            "build": file_info["build"],
-            "records": records,
-        })
+        file_records.append(
+            {
+                "path": file_info["path"],
+                "provider": file_info["provider"],
+                "build": file_info["build"],
+                "records": records,
+            }
+        )
 
         print(
             f"Loaded {len(records):,} SNPs from "
@@ -886,7 +951,35 @@ def run_merge(args):
     if report_file:
         print(f"Report                      : {report_file}")
     else:
-        print("Report                      : not created. Use --report-type html/json/txt/xml to create one.")
+        print(
+            "Report                      : not created. Use --report-type html/json/txt/xml to create one."
+        )
+
+
+def configure_parser(parser):
+    parser.add_argument(
+        "genetic_files",
+        nargs="+",
+        help="Two or more raw DNA files to merge",
+    )
+
+    parser.add_argument(
+        "--output-path",
+        help="Folder to write merged output files into. Defaults to the same folder as the first input file.",
+    )
+
+    parser.add_argument(
+        "--report-type",
+        choices=SUPPORTED_REPORT_TYPES,
+        help="Optional report format. Choices: html, json, txt, xml. Default: no report.",
+    )
+
+    parser.add_argument(
+        "--output-format",
+        default="txt",
+        choices=SUPPORTED_OUTPUT_FORMATS,
+        help="Merged output format. Choices: txt, tsv, csv, json, jsonl, vcf, vcfgz, parquet. Default: txt.",
+    )
 
 
 def main(args=None):

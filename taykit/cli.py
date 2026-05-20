@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
-
-from taykit.tools import merge, opus
+from taykit.tool_registry import TOOLS
 
 
 def main():
@@ -16,39 +15,27 @@ def main():
         metavar="<tool>",
     )
 
-    opus_parser = subparsers.add_parser(
-        "opus",
-        help="Generate OPUS reports from raw DNA files",
-    )
-    opus_parser.add_argument("genetic_file", nargs="?")
-    opus_parser.add_argument("--output-path")
+    tool_handlers = {}
 
-    merge_parser = subparsers.add_parser(
-        "merge",
-        help="Merge two or more raw DNA files",
-    )
-    merge_parser.add_argument("genetic_files", nargs="+")
-    merge_parser.add_argument("--output-path")
-    merge_parser.add_argument(
-        "--report-type",
-        choices=["html", "json", "txt", "xml"],
-    )
-    merge_parser.add_argument(
-        "--output-format",
-        default="txt",
-        choices=["txt", "tsv", "csv", "json", "jsonl", "vcf", "vcfgz", "parquet"],
-    )
+    for tool in TOOLS:
+        tool_parser = subparsers.add_parser(
+            tool.COMMAND,
+            help=tool.HELP,
+            description=tool.DESCRIPTION,
+            epilog=tool.EPILOG,
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+
+        tool.configure_parser(tool_parser)
+        tool_handlers[tool.COMMAND] = tool.main
 
     args = parser.parse_args()
 
-    if args.command == "opus":
-        opus.main(args)
-
-    elif args.command == "merge":
-        merge.main(args)
-
-    else:
+    if not args.command:
         parser.print_help()
+        return
+
+    tool_handlers[args.command](args)
 
 
 if __name__ == "__main__":

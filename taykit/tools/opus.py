@@ -6,6 +6,28 @@ import html
 import sys
 from pathlib import Path
 
+COMMAND = "opus"
+
+HELP = "Generate OPUS reports from raw DNA files"
+
+DESCRIPTION = "Generate OPUS TXT and HTML reports by matching a raw genetic file against OPUS SNPs."
+
+EPILOG = """
+Examples:
+  taykit opus mydna.txt
+  taykit opus mydna.txt --output-path ./reports
+
+Supported providers:
+  - SelfDecode
+  - 23andMe
+  - AncestryDNA
+  - MyHeritage
+
+Notes:
+  - GRCh37 / Build37 files are rejected.
+  - Run liftover before processing GRCh37 files.
+"""
+
 OPUS_LOOKUP = {
     "i3000469": {
         "gene": "HNMT",
@@ -42736,6 +42758,12 @@ def run_opus(args):
     print()
     print(f"TXT Report  : {txt_output}")
     print(f"HTML Report : {html_output}")
+
+
+def configure_parser(parser):
+    parser.add_argument("genetic_file", nargs="?", help="Path to the raw DNA file")
+
+    parser.add_argument("--output-path", help="Folder to write output reports into")
 
 
 def main(args=None):
