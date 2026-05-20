@@ -8,6 +8,8 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install pyinstaller pandas pyarrow pyliftover
 
-pyinstaller --onefile --name taykit taykit/cli.py
+rm -rf build dist taykit.spec
 
-echo "Built executable: dist/taykit"
+pyinstaller --onedir --name taykit taykit/cli.py
+
+echo "Built executable: dist/taykit/taykit"
