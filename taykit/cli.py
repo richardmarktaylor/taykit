@@ -7,10 +7,29 @@ import sys
 from taykit.tool_registry import TOOLS
 
 
+def _pyinstaller_hidden_imports():
+    """
+    This function is never called at runtime.
+
+    It exists so PyInstaller can see and bundle the dynamically loaded tool
+    modules when building the one-file executable.
+
+    Without this, importlib.import_module("taykit.tools.opus") can fail inside
+    the compiled executable with:
+
+        ModuleNotFoundError: No module named 'taykit.tools'
+    """
+
+    import taykit.tools.liftover  # noqa: F401
+    import taykit.tools.merge  # noqa: F401
+    import taykit.tools.opus  # noqa: F401
+
+
 def find_tool(command):
     for tool in TOOLS:
         if tool["command"] == command:
             return tool
+
     return None
 
 
