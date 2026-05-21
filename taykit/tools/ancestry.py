@@ -752,54 +752,107 @@ def sample_stem(sample_file: Path) -> str:
     return sample_file.stem
 
 
+def normalise_raw_genotype(value: str) -> str:
+    return value.strip().upper().replace("/", "").replace("|", "").replace(" ", "")
+
+
+def normalise_raw_rsid(value: str) -> str:
+    value = value.strip().replace('"', "")
+
+    if value.startswith("GSA-"):
+        value = value.replace("GSA-", "", 1)
+
+    return value
+
+
 def convert_text_to_vcf(sample_file: Path, out_vcf: Path) -> Path:
     opener = gzip.open if sample_file.suffix == ".gz" else open
 
+    rows = []
+    header = None
+    delimiter = None
+
     with opener(sample_file, "rt", newline="") as in_handle:
-        first_line = in_handle.readline()
-        delimiter = "\t" if "\t" in first_line else ","
-        in_handle.seek(0)
+        for raw_line in in_handle:
+            line = raw_line.strip()
 
-        reader = csv.DictReader(in_handle, delimiter=delimiter)
-        if not reader.fieldnames:
-            raise SystemExit("ERROR: Text genotype file has no header row.")
-
-        lower_map = {field.lower().strip(): field for field in reader.fieldnames}
-
-        def pick(*names: str) -> str:
-            for name in names:
-                if name in lower_map:
-                    return lower_map[name]
-            raise SystemExit(
-                f"ERROR: Text genotype file is missing one of these columns: {names}"
-            )
-
-        rsid_col = pick("rsid", "snp", "snp name")
-        chr_col = pick("chr", "chrom", "chromosome", "chrname")
-        pos_col = pick("pos", "position", "chrposition")
-        genotype_col = pick("genotype", "result", "plus strand", "alleles")
-
-        sample_name = sample_stem(sample_file)
-
-        rows = []
-
-        for row in reader:
-            rsid = row.get(rsid_col, "").strip()
-            chrom = row.get(chr_col, "").strip().replace("chr", "")
-            position = row.get(pos_col, "").strip()
-            genotype = (
-                row.get(genotype_col, "")
-                .strip()
-                .replace("/", "")
-                .replace("|", "")
-                .replace(" ", "")
-            )
-
-            if not rsid or not chrom or not position or len(genotype) != 2:
+            if not line:
                 continue
 
-            allele_one = genotype[0].upper()
-            allele_two = genotype[1].upper()
+            if line.startswith("##"):
+                continue
+
+            if line.startswith("#"):
+                possible_header = line.lstrip("#").strip()
+
+                if "rsid" in possible_header.lower():
+                    header = possible_header
+                    delimiter = "\t" if "\t" in possible_header else ","
+
+                continue
+
+            if header is None:
+                lower_line = line.lower()
+
+                if (
+                    lower_line.startswith("rsid")
+                    or lower_line.startswith("snp name")
+                    or lower_line.startswith("snp,")
+                    or lower_line.startswith("rsid,")
+                ):
+                    header = line
+                    delimiter = "\t" if "\t" in line else ","
+                    continue
+
+            if header is None:
+                continue
+
+            if delimiter is None:
+                delimiter = "\t" if "\t" in header else ","
+
+            reader = csv.reader([line], delimiter=delimiter)
+            parts = next(reader)
+
+            header_reader = csv.reader([header], delimiter=delimiter)
+            header_parts = [item.strip().lower() for item in next(header_reader)]
+
+            row_map = {}
+
+            for index, field_name in enumerate(header_parts):
+                if index < len(parts):
+                    row_map[field_name] = parts[index].strip().replace('"', "")
+
+            def get_value(*names: str) -> str:
+                for name in names:
+                    if name.lower() in row_map:
+                        return row_map[name.lower()]
+                return ""
+
+            rsid = normalise_raw_rsid(get_value("rsid", "snp", "snp name"))
+
+            chromosome = (
+                get_value("chromosome", "chrom", "chr")
+                .strip()
+                .replace("chr", "")
+                .replace("CHR", "")
+            )
+
+            position = get_value("position", "pos", "chrposition").strip()
+
+            genotype = normalise_raw_genotype(
+                get_value("genotype", "result", "plus strand", "alleles")
+            )
+
+            if not genotype:
+                allele1 = get_value("allele1", "allele 1").strip().upper()
+                allele2 = get_value("allele2", "allele 2").strip().upper()
+                genotype = normalise_raw_genotype(allele1 + allele2)
+
+            if not rsid or not chromosome or not position or len(genotype) != 2:
+                continue
+
+            allele_one = genotype[0]
+            allele_two = genotype[1]
 
             if allele_one not in "ACGT" or allele_two not in "ACGT":
                 continue
@@ -809,7 +862,13 @@ def convert_text_to_vcf(sample_file: Path, out_vcf: Path) -> Path:
             except ValueError:
                 continue
 
-            chrom_sort = 23 if chrom == "X" else int(chrom) if chrom.isdigit() else 99
+            chrom_sort = (
+                23
+                if chromosome == "X"
+                else int(chromosome)
+                if chromosome.isdigit()
+                else 99
+            )
 
             reference_allele = allele_one
             alternate_allele = allele_two if allele_two != reference_allele else "."
@@ -819,7 +878,7 @@ def convert_text_to_vcf(sample_file: Path, out_vcf: Path) -> Path:
                 (
                     chrom_sort,
                     pos_int,
-                    chrom,
+                    chromosome,
                     position,
                     rsid,
                     reference_allele,
@@ -828,18 +887,31 @@ def convert_text_to_vcf(sample_file: Path, out_vcf: Path) -> Path:
                 )
             )
 
+    if not rows:
+        raise SystemExit(
+            "ERROR: No usable SNP rows were found.\n\n"
+            "Supported text formats include:\n"
+            "  - AncestryDNA: rsid chromosome position allele1 allele2\n"
+            "  - SelfDecode: rsid chromosome position genotype\n"
+            "  - 23andMe: rsid chromosome position genotype\n"
+            "  - MyHeritage: RSID,CHROMOSOME,POSITION,RESULT\n"
+            "  - TayKit/GSLS-style: SNP Name, Chr, Position, Plus Strand\n"
+        )
+
     rows.sort(key=lambda item: (item[0], item[1], item[4]))
+
+    sample_name = sample_stem(sample_file)
 
     with open(out_vcf, "w") as out_handle:
         out_handle.write("##fileformat=VCFv4.2\n")
-        out_handle.write("##source=ancestry_pipeline_text_converter\n")
+        out_handle.write("##source=taykit_ancestry_text_converter\n")
         out_handle.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t")
         out_handle.write(sample_name + "\n")
 
         for (
             _,
             _,
-            chrom,
+            chromosome,
             position,
             rsid,
             reference_allele,
@@ -847,7 +919,7 @@ def convert_text_to_vcf(sample_file: Path, out_vcf: Path) -> Path:
             genotype_value,
         ) in rows:
             out_handle.write(
-                f"{chrom}\t{position}\t{rsid}\t"
+                f"{chromosome}\t{position}\t{rsid}\t"
                 f"{reference_allele}\t{alternate_allele}\t.\tPASS\t.\tGT\t{genotype_value}\n"
             )
 
