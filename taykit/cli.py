@@ -20,6 +20,7 @@ def _pyinstaller_hidden_imports():
         ModuleNotFoundError: No module named 'taykit.tools'
     """
 
+    import taykit.tools.ancestry  # noqa: F401
     import taykit.tools.liftover  # noqa: F401
     import taykit.tools.merge  # noqa: F401
     import taykit.tools.opus  # noqa: F401
