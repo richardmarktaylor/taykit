@@ -408,11 +408,19 @@ def get_clean_ref_vcf_path(chrom: str) -> Path:
     raw_path = get_raw_ref_vcf_path(chrom)
     clean_name = raw_path.name.replace(".vcf.gz", ".strict.biallelic.dedup.vcf.gz")
     clean_path = CLEAN_REF_DIR / clean_name
+
     if clean_path.exists() and Path(str(clean_path) + ".tbi").exists():
         return clean_path
 
-    log(f"[ref] Preparing strict biallelic reference for chr{chrom} → {clean_path}")
-    proc = subprocess.run(
+    normalised_path = CLEAN_REF_DIR / raw_path.name.replace(
+        ".vcf.gz", ".normalised.dedup.vcf.gz"
+    )
+
+    log(
+        f"[ref] Normalising and deduplicating reference for chr{chrom} → {normalised_path}"
+    )
+
+    subprocess.run(
         [
             BCFTOOLS_CMD,
             "norm",
@@ -420,17 +428,37 @@ def get_clean_ref_vcf_path(chrom: str) -> Path:
             "-any",
             "-d",
             "all",
+            "-Oz",
+            "-o",
+            str(normalised_path),
+            str(raw_path),
+        ],
+        check=True,
+    )
+
+    log(f"[ref] Filtering strict biallelic SNPs for chr{chrom} → {clean_path}")
+
+    subprocess.run(
+        [
+            BCFTOOLS_CMD,
+            "view",
+            "-m2",
+            "-M2",
             "-v",
             "snps",
             "-Oz",
             "-o",
             str(clean_path),
-            str(raw_path),
-        ]
+            str(normalised_path),
+        ],
+        check=True,
     )
-    if proc.returncode != 0:
-        raise RuntimeError(f"bcftools norm failed for {raw_path}")
+
     _run([TABIX_CMD, "-f", "-p", "vcf", str(clean_path)], check=True)
+
+    normalised_path.unlink(missing_ok=True)
+    Path(str(normalised_path) + ".tbi").unlink(missing_ok=True)
+
     return clean_path
 
 
