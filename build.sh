@@ -6,7 +6,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 
 python -m pip install --upgrade pip
-python -m pip install pyinstaller pandas pyarrow pyliftover requests tqdm
+python -m pip install pyinstaller pandas pyarrow pyliftover requests tqdm pysam
 
 rm -rf build dist taykit.spec
 

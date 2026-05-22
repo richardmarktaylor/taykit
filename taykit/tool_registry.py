@@ -152,4 +152,71 @@ TOOLS = [
             },
         ],
     },
+    {
+        "command": "impute",
+        "help": "Impute GRCh38 raw DNA files using 1000 Genomes 30x",
+        "module": "taykit.tools.impute",
+        "description": "Run strict GRCh38 genotype imputation using 1000 Genomes 30x, Beagle, ShapeIT4 and optional IMPUTE5.",
+        "arguments": [
+            {
+                "name": "input_file",
+                "kwargs": {
+                    "nargs": "?",
+                    "help": "Path to raw DNA input file .txt, .tsv, or .csv",
+                },
+            },
+            {
+                "name": "output_file",
+                "kwargs": {
+                    "nargs": "?",
+                    "help": "Path to final output file",
+                },
+            },
+            {
+                "name": "--wizard",
+                "kwargs": {
+                    "action": "store_true",
+                    "help": "Launch an interactive imputation command builder.",
+                },
+            },
+            {
+                "name": "--output-format",
+                "kwargs": {"choices": ["tsv", "vcf", "vcf.gz"], "default": "tsv"},
+            },
+            {"name": "--min-quality", "kwargs": {"type": float, "default": 0.8}},
+            {"name": "--min-dr2", "kwargs": {"type": float, "dest": "min_quality"}},
+            {"name": "--impute-chr-x", "kwargs": {"action": "store_true"}},
+            {"name": "--download-references", "kwargs": {"action": "store_true"}},
+            {"name": "--threads", "kwargs": {"type": int, "default": 30}},
+            {
+                "name": "--phasing-tool",
+                "kwargs": {"choices": ["shapeit4", "beagle"], "default": "shapeit4"},
+            },
+            {"name": "--require-shapeit4", "kwargs": {"action": "store_true"}},
+            {
+                "name": "--imputation-mode",
+                "kwargs": {
+                    "choices": ["beagle", "impute5", "both"],
+                    "default": "beagle",
+                },
+            },
+            {"name": "--allow-position-fallback", "kwargs": {"action": "store_true"}},
+            {"name": "--keep-ambiguous-snps", "kwargs": {"action": "store_true"}},
+            {"name": "--low-freq-max-maf", "kwargs": {"type": float, "default": 0.05}},
+            {"name": "--beagle-memory", "kwargs": {"default": "96g"}},
+            {"name": "--beagle-window-cm", "kwargs": {"default": "40.0"}},
+            {"name": "--beagle-overlap-cm", "kwargs": {"default": "4.0"}},
+            {"name": "--beagle-window-markers", "kwargs": {"default": "2000000"}},
+            {"name": "--beagle-imp-states", "kwargs": {"default": "4000"}},
+            {"name": "--beagle-phase-states", "kwargs": {"default": "800"}},
+            {"name": "--beagle-iterations", "kwargs": {"default": "12"}},
+            {
+                "name": "--beagle-em",
+                "kwargs": {"choices": ["true", "false"], "default": "true"},
+            },
+            {"name": "--beagle-ne", "kwargs": {"default": ""}},
+            {"name": "--beagle-err", "kwargs": {"default": ""}},
+            {"name": "--keep-temp", "kwargs": {"action": "store_true"}},
+        ],
+    },
 ]
