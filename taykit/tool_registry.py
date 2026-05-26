@@ -1,100 +1,238 @@
-#!/usr/bin/env python3
+import os
+from pathlib import Path
 
-import argparse
-import importlib
-import sys
-
-from taykit.tool_registry import TOOLS
-
-
-def _pyinstaller_hidden_imports():
-    """
-    This function is never called at runtime.
-
-    It exists so PyInstaller can see and bundle the dynamically loaded tool
-    modules when building the one-file executable.
-    """
-
-    import taykit.tools.ancestry  # noqa: F401
-    import taykit.tools.impute  # noqa: F401
-    import taykit.tools.liftover  # noqa: F401
-    import taykit.tools.merge  # noqa: F401
-    import taykit.tools.opus  # noqa: F401
-
-
-def find_tool(command):
-    for tool in TOOLS:
-        if tool["command"] == command:
-            return tool
-
-    return None
-
-
-def build_tool_parser(tool):
-    parser = argparse.ArgumentParser(
-        prog=f"taykit {tool['command']}",
-        description=tool["description"],
-        epilog=tool.get("epilog"),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-
-    for argument in tool.get("arguments", []):
-        parser.add_argument(argument["name"], **argument["kwargs"])
-
-    return parser
-
-
-def print_main_help():
-    print("Taylor bioinformatics command-line toolkit")
-    print()
-    print("Usage:")
-    print("  taykit <tool> <input_file> [output_file] [options]")
-    print()
-    print("Available tools:")
-
-    for tool in TOOLS:
-        print(f"  {tool['command']:<12} {tool['help']}")
-
-    print()
-    print("Examples:")
-    print("  taykit opus input.txt")
-    print("  taykit merge input1.txt input2.txt")
-    print("  taykit liftover input.txt output.txt")
-    print("  taykit ancestry input.txt")
-    print("  taykit impute input.txt output.vcf.gz --output-format vcf.gz")
-    print("  taykit impute --wizard")
-    print()
-    print("Help:")
-    print("  taykit <tool> --help")
-
-
-def main():
-    if len(sys.argv) == 1 or sys.argv[1] in ["-h", "--help"]:
-        print_main_help()
-        return
-
-    command = sys.argv[1]
-    remaining_args = sys.argv[2:]
-
-    tool = find_tool(command)
-
-    if tool is None:
-        print(f"ERROR: Unknown taykit tool: {command}")
-        print()
-        print_main_help()
-        sys.exit(1)
-
-    tool_parser = build_tool_parser(tool)
-
-    if not remaining_args or remaining_args[0] in ["-h", "--help"]:
-        tool_parser.print_help()
-        return
-
-    tool_args = tool_parser.parse_args(remaining_args)
-
-    module = importlib.import_module(tool["module"])
-    module.main(tool_args)
-
-
-if __name__ == "__main__":
-    main()
+TOOLS = [
+    {
+        "command": "ancestry",
+        "help": "Run 1000 Genomes 30x ancestry PCA and ADMIXTURE pipeline",
+        "module": "taykit.tools.ancestry",
+        "description": "Prepare a 1000 Genomes 30x GRCh38 ancestry reference and run ancestry inference for a sample file.",
+        "arguments": [
+            {
+                "name": "--prepare",
+                "kwargs": {
+                    "action": "store_true",
+                    "help": "Download tools/reference data and build reusable reference files, then exit.",
+                },
+            },
+            {
+                "name": "--sample-file",
+                "kwargs": {
+                    "type": Path,
+                    "help": "Input sample file: .txt, .vcf, .gvcf, .vcf.gz, or .gvcf.gz",
+                },
+            },
+            {
+                "name": "--force",
+                "kwargs": {
+                    "action": "store_true",
+                    "help": "Force rebuilding/redownloading where possible.",
+                },
+            },
+            {
+                "name": "--threads",
+                "kwargs": {
+                    "type": int,
+                    "default": os.cpu_count() or 1,
+                    "help": "Number of CPU threads to use.",
+                },
+            },
+            {
+                "name": "--admixture-k",
+                "kwargs": {
+                    "type": int,
+                    "default": 5,
+                    "help": "Number of ADMIXTURE ancestral clusters to model.",
+                },
+            },
+        ],
+    },
+    {
+        "command": "opus",
+        "help": "Generate OPUS reports from raw DNA files",
+        "module": "taykit.tools.opus",
+        "description": "Generate OPUS reports from raw DNA files.",
+        "arguments": [
+            {
+                "name": "genetic_file",
+                "kwargs": {"nargs": "?", "help": "Path to the raw DNA file"},
+            },
+            {
+                "name": "--output-path",
+                "kwargs": {"help": "Folder to write output reports into"},
+            },
+        ],
+    },
+    {
+        "command": "merge",
+        "help": "Merge two or more raw DNA files",
+        "module": "taykit.tools.merge",
+        "description": "Merge two or more raw genetic data files into one distinct rsID/genotype dataset.",
+        "arguments": [
+            {
+                "name": "genetic_files",
+                "kwargs": {"nargs": "+", "help": "Two or more raw DNA files to merge"},
+            },
+            {
+                "name": "--output-path",
+                "kwargs": {"help": "Folder to write output files into"},
+            },
+            {
+                "name": "--report-type",
+                "kwargs": {
+                    "choices": ["html", "json", "txt", "xml"],
+                    "help": "Optional report format",
+                },
+            },
+            {
+                "name": "--output-format",
+                "kwargs": {
+                    "default": "txt",
+                    "choices": [
+                        "txt",
+                        "tsv",
+                        "csv",
+                        "json",
+                        "jsonl",
+                        "vcf",
+                        "vcfgz",
+                        "parquet",
+                    ],
+                    "help": "Output format",
+                },
+            },
+        ],
+    },
+    {
+        "command": "liftover",
+        "help": "Convert raw DNA files from GRCh37 to GRCh38",
+        "module": "taykit.tools.liftover",
+        "description": "Convert supported raw genetic files from GRCh37 coordinates to GRCh38 coordinates.",
+        "arguments": [
+            {
+                "name": "genetic_file",
+                "kwargs": {
+                    "nargs": "?",
+                    "help": "Raw DNA file to convert from GRCh37 to GRCh38",
+                },
+            },
+            {
+                "name": "--output-path",
+                "kwargs": {"help": "Folder to write output files into"},
+            },
+            {
+                "name": "--output-format",
+                "kwargs": {
+                    "default": "txt",
+                    "choices": [
+                        "txt",
+                        "tsv",
+                        "csv",
+                        "json",
+                        "jsonl",
+                        "vcf",
+                        "vcfgz",
+                        "parquet",
+                    ],
+                    "help": "Output format",
+                },
+            },
+            {
+                "name": "--report-type",
+                "kwargs": {
+                    "choices": ["html", "json", "txt", "xml"],
+                    "help": "Optional report format",
+                },
+            },
+            {
+                "name": "--assume-grch37",
+                "kwargs": {
+                    "action": "store_true",
+                    "help": "Allow liftover when build cannot be detected",
+                },
+            },
+        ],
+    },
+    {
+        "command": "impute",
+        "help": "Impute GRCh38 raw DNA files using 1000 Genomes 30x",
+        "module": "taykit.tools.impute",
+        "description": "Run strict GRCh38 genotype imputation using 1000 Genomes 30x, Beagle, ShapeIT4 and optional IMPUTE5.",
+        "arguments": [
+            {
+                "name": "input_file",
+                "kwargs": {
+                    "nargs": "?",
+                    "help": "Path to raw DNA input file .txt, .tsv, or .csv",
+                },
+            },
+            {
+                "name": "output_file",
+                "kwargs": {"nargs": "?", "help": "Path to final output file"},
+            },
+            {
+                "name": "--wizard",
+                "kwargs": {
+                    "action": "store_true",
+                    "help": "Launch an interactive imputation command builder.",
+                },
+            },
+            {
+                "name": "--output-format",
+                "kwargs": {"choices": ["tsv", "vcf", "vcf.gz"], "default": "tsv"},
+            },
+            {"name": "--min-quality", "kwargs": {"type": float, "default": 0.8}},
+            {"name": "--min-dr2", "kwargs": {"type": float, "dest": "min_quality"}},
+            {
+                "name": "--impute-chr-x",
+                "kwargs": {"action": "store_true", "default": False},
+            },
+            {
+                "name": "--download-references",
+                "kwargs": {
+                    "action": "store_true",
+                    "default": True,
+                    "help": "Download missing reference files. This is on by default.",
+                },
+            },
+            {
+                "name": "--no-download-references",
+                "kwargs": {
+                    "action": "store_false",
+                    "dest": "download_references",
+                    "help": "Do not download missing reference files.",
+                },
+            },
+            {
+                "name": "--threads",
+                "kwargs": {"type": int, "default": os.cpu_count() or 1},
+            },
+            {
+                "name": "--phasing-tool",
+                "kwargs": {"choices": ["shapeit4", "beagle"], "default": "shapeit4"},
+            },
+            {"name": "--require-shapeit4", "kwargs": {"action": "store_true"}},
+            {
+                "name": "--imputation-mode",
+                "kwargs": {"choices": ["beagle", "impute5", "both"], "default": "both"},
+            },
+            {"name": "--allow-position-fallback", "kwargs": {"action": "store_true"}},
+            {"name": "--keep-ambiguous-snps", "kwargs": {"action": "store_true"}},
+            {"name": "--low-freq-max-maf", "kwargs": {"type": float, "default": 0.05}},
+            {"name": "--beagle-memory", "kwargs": {"default": "96g"}},
+            {"name": "--beagle-window-cm", "kwargs": {"default": "40.0"}},
+            {"name": "--beagle-overlap-cm", "kwargs": {"default": "4.0"}},
+            {"name": "--beagle-window-markers", "kwargs": {"default": "2000000"}},
+            {"name": "--beagle-imp-states", "kwargs": {"default": "4000"}},
+            {"name": "--beagle-phase-states", "kwargs": {"default": "800"}},
+            {"name": "--beagle-iterations", "kwargs": {"default": "12"}},
+            {
+                "name": "--beagle-em",
+                "kwargs": {"choices": ["true", "false"], "default": "true"},
+            },
+            {"name": "--beagle-ne", "kwargs": {"default": ""}},
+            {"name": "--beagle-err", "kwargs": {"default": ""}},
+            {"name": "--keep-temp", "kwargs": {"action": "store_true"}},
+        ],
+    },
+]
