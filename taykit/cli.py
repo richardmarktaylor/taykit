@@ -13,11 +13,6 @@ def _pyinstaller_hidden_imports():
 
     It exists so PyInstaller can see and bundle the dynamically loaded tool
     modules when building the one-file executable.
-
-    Without this, importlib.import_module("taykit.tools.opus") can fail inside
-    the compiled executable with:
-
-        ModuleNotFoundError: No module named 'taykit.tools'
     """
 
     import taykit.tools.ancestry  # noqa: F401
@@ -39,6 +34,7 @@ def build_tool_parser(tool):
     parser = argparse.ArgumentParser(
         prog=f"taykit {tool['command']}",
         description=tool["description"],
+        epilog=tool.get("epilog"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
@@ -52,7 +48,7 @@ def print_main_help():
     print("Taylor bioinformatics command-line toolkit")
     print()
     print("Usage:")
-    print("  taykit <tool> [options]")
+    print("  taykit <tool> <input_file> [output_file] [options]")
     print()
     print("Available tools:")
 
@@ -61,9 +57,15 @@ def print_main_help():
 
     print()
     print("Examples:")
-    print("  taykit opus --help")
-    print("  taykit merge --help")
-    print("  taykit liftover --help")
+    print("  taykit opus input.txt")
+    print("  taykit merge input1.txt input2.txt")
+    print("  taykit liftover input.txt output.txt")
+    print("  taykit ancestry input.txt")
+    print("  taykit impute input.txt output.vcf.gz --output-format vcf.gz")
+    print("  taykit impute --wizard")
+    print()
+    print("Help:")
+    print("  taykit <tool> --help")
 
 
 def main():

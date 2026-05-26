@@ -43,6 +43,25 @@ Notes:
 """
 
 
+def get_default_beagle_memory() -> str:
+    try:
+        import psutil
+
+        total_gb = psutil.virtual_memory().total / (1024**3)
+    except ImportError:
+        # macOS fallback without psutil
+        if sys.platform == "darwin":
+            total_bytes = int(os.popen("sysctl -n hw.memsize").read().strip())
+            total_gb = total_bytes / (1024**3)
+        else:
+            total_gb = 16
+
+    # Leave RAM for macOS, Python, bcftools, tabix, etc.
+    usable_gb = max(4, int(total_gb * 0.70))
+
+    return f"{usable_gb}g"
+
+
 # =========================================================
 # CONFIGURATION
 # =========================================================
@@ -65,8 +84,11 @@ IMP5CONVERTER_CMD = "imp5Converter"
 DEFAULT_IMPUTE_CHR_X = False
 
 CPU_COUNT = os.cpu_count() or 1
-DEFAULT_THREADS = max(1, CPU_COUNT - 2)
-DEFAULT_BEAGLE_MEMORY = "96g"
+DEFAULT_THREADS = max(1, CPU_COUNT)
+
+DEFAULT_BEAGLE_MEMORY = get_default_beagle_memory()
+
+DEFAULT_DOWNLOAD_REFERENCES = True
 
 DEFAULT_BEAGLE_WINDOW_CM = "40.0"
 DEFAULT_BEAGLE_OVERLAP_CM = "4.0"
@@ -80,7 +102,7 @@ DEFAULT_BEAGLE_ERR = ""
 
 DEFAULT_MIN_QUALITY = 0.8
 DEFAULT_LOW_FREQ_MAX_MAF = 0.05
-DEFAULT_IMPUTATION_MODE = "beagle"
+DEFAULT_IMPUTATION_MODE = "both"
 DEFAULT_PHASING_TOOL = "shapeit4"
 
 RECOMB_MAP_DIR = (
@@ -105,6 +127,9 @@ REFERENCE_BASE_URL = (
     "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/"
     "1000G_2504_high_coverage/working/20201028_3202_phased"
 )
+
+TAYKIT_DOWNLOAD_BASE_URL = "https://taykit-downloads.s3.amazonaws.com"
+TAYKIT_IMPUTATION_PREFIX = "imputation"
 
 NC_TO_CHR_GRCH38 = {
     "NC_000001.11": "1",
@@ -271,13 +296,31 @@ def ensure_directories() -> None:
 
 def download_file(url: str, destination: Path, *, force: bool = False) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
+
     if destination.exists() and destination.stat().st_size > 0 and not force:
         return
+
     temp_path = destination.with_suffix(destination.suffix + ".download")
-    log(f"Downloading {url}")
-    urllib.request.urlretrieve(url, temp_path)
-    temp_path.replace(destination)
-    log(f"Downloaded {destination}")
+
+    try:
+        log(f"Downloading {url}")
+        urllib.request.urlretrieve(url, temp_path)
+        temp_path.replace(destination)
+        log(f"Downloaded {destination}")
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+
+
+def download_from_taykit_mirror(relative_key: str, destination: Path) -> bool:
+    mirror_url = f"{TAYKIT_DOWNLOAD_BASE_URL}/{relative_key}"
+
+    try:
+        download_file(mirror_url, destination)
+        return True
+    except Exception as e:
+        log(f"Mirror download failed for {relative_key}: {e}")
+        return False
 
 
 def ensure_index(vcf_path: Path) -> None:
@@ -376,16 +419,30 @@ def get_reference_vcf_filename(chrom: str) -> str:
 
 def ensure_1000g_reference_downloaded(chrom: str, *, download: bool) -> None:
     filename = get_reference_vcf_filename(chrom)
+
     if not filename:
         return
+
     vcf_path = THOUSAND_GENOMES_DIR / filename
     tbi_path = Path(str(vcf_path) + ".tbi")
+
     if vcf_path.exists() and tbi_path.exists():
         return
+
     if not download:
         raise FileNotFoundError(
             f"Reference file missing: {vcf_path}. Run with --download-references to fetch it."
         )
+
+    vcf_key = f"{TAYKIT_IMPUTATION_PREFIX}/reference_1000_genome_30x_grch38/{filename}"
+    tbi_key = f"{vcf_key}.tbi"
+
+    vcf_ok = download_from_taykit_mirror(vcf_key, vcf_path)
+    tbi_ok = download_from_taykit_mirror(tbi_key, tbi_path)
+
+    if vcf_ok and tbi_ok:
+        return
+
     download_file(f"{REFERENCE_BASE_URL}/{filename}", vcf_path)
     download_file(f"{REFERENCE_BASE_URL}/{filename}.tbi", tbi_path)
 
@@ -420,7 +477,7 @@ def get_clean_ref_vcf_path(chrom: str) -> Path:
         f"[ref] Normalising and deduplicating reference for chr{chrom} → {normalised_path}"
     )
 
-    subprocess.run(
+    _run(
         [
             BCFTOOLS_CMD,
             "norm",
@@ -438,7 +495,7 @@ def get_clean_ref_vcf_path(chrom: str) -> Path:
 
     log(f"[ref] Filtering strict biallelic SNPs for chr{chrom} → {clean_path}")
 
-    subprocess.run(
+    _run(
         [
             BCFTOOLS_CMD,
             "view",
@@ -559,6 +616,15 @@ def get_or_create_dbsnp_tsv_for_style(target_style: str) -> Path:
 def validate_reference_files(impute_chr_x: bool, *, download_references: bool) -> None:
     chroms = AUTOSOMES + (["X"] if impute_chr_x else [])
     missing = []
+    for chrom in chroms:
+        map_name = RECOMB_MAP_TEMPLATE.format(chrom=chrom)
+        map_path = RECOMB_MAP_DIR / map_name
+        map_key = (
+            f"{TAYKIT_IMPUTATION_PREFIX}/reference_recombination_maps/"
+            f"plink.GRCh38.map/no_chr_in_chrom_field/{map_name}"
+        )
+
+        ensure_static_reference_file(map_key, map_path, download=download_references)
     for chrom in chroms:
         try:
             ensure_1000g_reference_downloaded(chrom, download=download_references)
@@ -1042,18 +1108,23 @@ def run_impute5_for_chromosome(
 
 def run_imputation_engines(chrom: str, target_vcf_gz: Path, args) -> List[EngineResult]:
     results: List[EngineResult] = []
+
     if args.imputation_mode in {"beagle", "both"}:
         results.append(
             EngineResult(
-                "beagle", run_beagle_for_chromosome(chrom, target_vcf_gz, args)
+                "beagle",
+                run_beagle_for_chromosome(chrom, target_vcf_gz, args),
             )
         )
+
     if args.imputation_mode in {"impute5", "both"}:
         results.append(
             EngineResult(
-                "impute5", run_impute5_for_chromosome(chrom, target_vcf_gz, args)
+                "impute5",
+                run_impute5_for_chromosome(chrom, target_vcf_gz, args),
             )
         )
+
     return results
 
 
@@ -1129,6 +1200,21 @@ def extract_maf_from_record(rec) -> Optional[float]:
         af = extract_info_float(rec.info.get("MAF"))
         return af
     return min(af, 1.0 - af)
+
+
+def ensure_static_reference_file(
+    relative_key: str, destination: Path, *, download: bool
+) -> None:
+    if destination.exists() and destination.stat().st_size > 0:
+        return
+
+    if not download:
+        raise FileNotFoundError(f"Missing required file: {destination}")
+
+    if not download_from_taykit_mirror(relative_key, destination):
+        raise FileNotFoundError(
+            f"Could not download required TayKit reference file from mirror: {relative_key}"
+        )
 
 
 def collect_preserved_original_rows_for_chrom(
@@ -1743,7 +1829,15 @@ def configure_parser(parser):
     parser.add_argument(
         "--download-references",
         action="store_true",
-        help="Download missing 1000 Genomes 30x reference VCFs and indexes",
+        default=DEFAULT_DOWNLOAD_REFERENCES,
+        help="Download missing 1000 Genomes 30x reference VCFs and indexes. This is on by default.",
+    )
+
+    parser.add_argument(
+        "--no-download-references",
+        action="store_false",
+        dest="download_references",
+        help="Do not download missing 1000 Genomes reference files.",
     )
 
     parser.add_argument("--threads", type=int, default=DEFAULT_THREADS)
@@ -1834,6 +1928,13 @@ def main(args=None):
             ensure_directories()
             ensure_tools_available(args)
 
+            if args.imputation_mode in {"beagle", "both"}:
+                ensure_static_reference_file(
+                    f"{TAYKIT_IMPUTATION_PREFIX}/reference_beagle/beagle.27Feb25.75f.jar",
+                    BEAGLE_JAR,
+                    download=args.download_references,
+                )
+
             if not input_file_path.exists():
                 raise FileNotFoundError(f"Input file not found: {input_file_path}")
             if args.imputation_mode in {"beagle", "both"} and not BEAGLE_JAR.exists():
@@ -1854,6 +1955,18 @@ def main(args=None):
             )
             ref_style = detect_contig_style_from_ref_contig(ref_contig_map["1"])
             log(f"Detected reference contig style: {ref_style}")
+            if USE_DBSNP_RSID_LOOKUP:
+                ensure_static_reference_file(
+                    f"{TAYKIT_IMPUTATION_PREFIX}/reference_ncbi/dbsnp_GRCh38_chrpos_rsid_snps.chr.tsv.gz",
+                    DBSNP_GRCH38_CHR_TSV,
+                    download=args.download_references,
+                )
+
+                ensure_static_reference_file(
+                    f"{TAYKIT_IMPUTATION_PREFIX}/reference_ncbi/dbsnp_GRCh38_chrpos_rsid_snps.chr.tsv.gz.tbi",
+                    Path(str(DBSNP_GRCH38_CHR_TSV) + ".tbi"),
+                    download=args.download_references,
+                )
             dbsnp_tsv_for_annotation = get_or_create_dbsnp_tsv_for_style(ref_style)
             log(f"Using dbSNP annotation TSV: {dbsnp_tsv_for_annotation}")
 
